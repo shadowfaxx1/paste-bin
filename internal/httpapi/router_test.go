@@ -21,6 +21,25 @@ type fakeMessageStore struct {
 	listErr   error
 }
 
+type fakeKVStore struct {
+	data map[string]string
+}
+
+func newFakeKVStore() *fakeKVStore { return &fakeKVStore{data: map[string]string{}} }
+
+func (f *fakeKVStore) SetKV(_ context.Context, key, value string) (store.KVEntry, error) {
+	f.data[key] = value
+	return store.KVEntry{Key: key, Value: value}, nil
+}
+
+func (f *fakeKVStore) GetKV(_ context.Context, key string) (store.KVEntry, error) {
+	v, ok := f.data[key]
+	if !ok {
+		return store.KVEntry{}, store.ErrNotFound
+	}
+	return store.KVEntry{Key: key, Value: v}, nil
+}
+
 func (f *fakeMessageStore) CreateMessage(_ context.Context, text string) (store.Message, error) {
 	if f.createErr != nil {
 		return store.Message{}, f.createErr
@@ -51,7 +70,7 @@ func (f *fakeMessageStore) Ping(_ context.Context) error {
 
 func TestCreateAndListMessages(t *testing.T) {
 	fakeStore := &fakeMessageStore{}
-	handler := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), fakeStore)
+	handler := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), fakeStore, newFakeKVStore())
 
 	postReq := httptest.NewRequest(http.MethodPost, "/message", bytes.NewBufferString(`{"text":"hello"}`))
 	postRec := httptest.NewRecorder()
@@ -89,7 +108,7 @@ func TestCreateAndListMessages(t *testing.T) {
 }
 
 func TestRejectsInvalidLimit(t *testing.T) {
-	handler := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), &fakeMessageStore{})
+	handler := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), &fakeMessageStore{}, newFakeKVStore())
 	req := httptest.NewRequest(http.MethodGet, "/message?limit=999", nil)
 	rec := httptest.NewRecorder()
 

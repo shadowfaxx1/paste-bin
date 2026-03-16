@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -19,23 +20,35 @@ type MessageStore interface {
 	Ping(ctx context.Context) error
 }
 
+type KVStore interface {
+	SetKV(ctx context.Context, key, value string) (store.KVEntry, error)
+	GetKV(ctx context.Context, key string) (store.KVEntry, error)
+}
+
 type router struct {
 	logger       *slog.Logger
 	messageStore MessageStore
+	kvStore      KVStore
 }
 
 type createMessageRequest struct {
 	Text string `json:"text"`
 }
 
+type setKVRequest struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
 type errorResponse struct {
 	Error string `json:"error"`
 }
 
-func NewRouter(logger *slog.Logger, messageStore MessageStore) http.Handler {
+func NewRouter(logger *slog.Logger, messageStore MessageStore, kvStore KVStore) http.Handler {
 	r := &router{
 		logger:       logger,
 		messageStore: messageStore,
+		kvStore:      kvStore,
 	}
 
 	mux := http.NewServeMux()
@@ -43,6 +56,8 @@ func NewRouter(logger *slog.Logger, messageStore MessageStore) http.Handler {
 	mux.HandleFunc("GET /healthz", r.handleHealth)
 	mux.HandleFunc("GET /message", r.handleListMessages)
 	mux.HandleFunc("POST /message", r.handleCreateMessage)
+	mux.HandleFunc("POST /kv", r.handleSetKV)
+	mux.HandleFunc("GET /kv/{key}", r.handleGetKV)
 
 	return r.withMiddleware(mux)
 }
@@ -143,6 +158,68 @@ func (r *router) handleListMessages(w http.ResponseWriter, req *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"messages": messages})
+}
+
+func (r *router) handleSetKV(w http.ResponseWriter, req *http.Request) {
+	req.Body = http.MaxBytesReader(w, req.Body, 1<<20)
+	defer req.Body.Close()
+
+	var payload setKVRequest
+	decoder := json.NewDecoder(req.Body)
+	decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(&payload); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
+		return
+	}
+
+	payload.Key = strings.TrimSpace(payload.Key)
+	payload.Value = strings.TrimSpace(payload.Value)
+
+	if payload.Key == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "key is required"})
+		return
+	}
+	if payload.Value == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "value is required"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(req.Context(), 3*time.Second)
+	defer cancel()
+
+	entry, err := r.kvStore.SetKV(ctx, payload.Key, payload.Value)
+	if err != nil {
+		r.logger.Error("set kv failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "failed to set key"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, entry)
+}
+
+func (r *router) handleGetKV(w http.ResponseWriter, req *http.Request) {
+	key := req.PathValue("key")
+	if key == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "key is required"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(req.Context(), 3*time.Second)
+	defer cancel()
+
+	entry, err := r.kvStore.GetKV(ctx, key)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "key not found"})
+			return
+		}
+		r.logger.Error("get kv failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "failed to get key"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, entry)
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
