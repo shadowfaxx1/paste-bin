@@ -40,7 +40,7 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-If `.env` is missing, Docker Compose will now stop immediately with a clear error instead of starting PostgreSQL with an empty password.
+If `.env` is missing, Docker Compose will now stop immediately with a clear error
 
 4. Check health:
 
@@ -57,16 +57,6 @@ curl -X POST http://localhost/message \
 
 curl http://localhost/message
 ```
-
-## Why this is production-ready enough
-
-- graceful shutdown in the Go server
-- PostgreSQL connection pooling
-- startup migration for a single simple schema
-- health checks for PostgreSQL, API, and Nginx dependency order
-- JSON logging
-- request size limit and Nginx rate limiting
-- only Nginx is exposed publicly
 
 ## Deploy on a server
 
