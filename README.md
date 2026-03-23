@@ -7,7 +7,7 @@ Small production-ready API stack for storing and reading messages.
 - Go API
 - PostgreSQL
 - Nginx reverse proxy
-- Docker Compose
+- Docker 
 
 ## Endpoints
 
